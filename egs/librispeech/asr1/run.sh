@@ -12,11 +12,12 @@ stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
 ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
+dnj=45
 debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
 verbose=0      # verbose option
-resume=        # Resume the training from snapshot
+resume=exp/train_960_pytorch_base/results/snapshot.ep.96 # Resume the training from snapshot
 
 # feature configuration
 do_delta=false
@@ -46,7 +47,7 @@ use_lm_valbest_average=false # if true, the validation `lm_n_average`-best langu
 # Set this to somewhere where you want to put your data, or where
 # someone else has already put it.  You'll want to change this
 # if you're not on the CLSP grid.
-datadir=/export/a15/vpanayotov/data
+datadir=/disk/scratch4/acarmant/kaldi/egs/librispeech/s5/data/LibriSpeech
 
 # base url for downloads.
 data_url=www.openslr.org/resources/12
@@ -56,7 +57,7 @@ nbpe=5000
 bpemode=unigram
 
 # exp tag
-tag="" # tag for managing experiments.
+tag="base" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -68,8 +69,12 @@ set -o pipefail
 
 train_set=train_960
 train_dev=dev
-recog_set="test_clean test_other dev_clean dev_other"
+recog_set=""
 
+for acc in us; do
+    recog_set+="commonvoice/$acc/test "
+done
+ 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
     for part in dev-clean test-clean dev-other test-other train-clean-100 train-clean-360 train-other-500; do
@@ -113,16 +118,6 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
 
     # dump features for training
-    if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir}/storage ]; then
-    utils/create_split_dir.pl \
-        /export/b{14,15,16,17}/${USER}/espnet-data/egs/librispeech/asr1/dump/${train_set}/delta${do_delta}/storage \
-        ${feat_tr_dir}/storage
-    fi
-    if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_dt_dir}/storage ]; then
-    utils/create_split_dir.pl \
-        /export/b{14,15,16,17}/${USER}/espnet-data/egs/librispeech/asr1/dump/${train_dev}/delta${do_delta}/storage \
-        ${feat_dt_dir}/storage
-    fi
     dump.sh --cmd "$train_cmd" --nj ${nj} --do_delta ${do_delta} \
         data/${train_set}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/train ${feat_tr_dir}
     dump.sh --cmd "$train_cmd" --nj ${nj} --do_delta ${do_delta} \
@@ -165,7 +160,7 @@ fi
 if [ -z ${lmtag} ]; then
     lmtag=$(basename ${lm_config%.*})
 fi
-lmexpname=train_rnnlm_${backend}_${lmtag}_${bpemode}${nbpe}_ngpu${ngpu}
+lmexpname=${backend}_${lmtag}_${bpemode}${nbpe}_ngpu${ngpu}
 lmexpdir=exp/${lmexpname}
 mkdir -p ${lmexpdir}
 
@@ -185,10 +180,11 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         cut -f 2- -d" " data/${train_dev}/text | spm_encode --model=${bpemodel}.model --output_format=piece \
                                                             > ${lmdatadir}/valid.txt
     fi
-    ${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
+    [ ! -z ${lm_resume} ]  && lm_resume=${lmexpdir}/${lm_resume}
+    ${cuda_cmd} --gpu 2 ${lmexpdir}/train.log \
         lm_train.py \
         --config ${lm_config} \
-        --ngpu ${ngpu} \
+        --ngpu 2 \
         --backend ${backend} \
         --verbose 1 \
         --outdir ${lmexpdir} \
@@ -246,13 +242,14 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             recog_model=model.last${n_average}.avg.best
             opt="--log"
         fi
-        average_checkpoints.py \
-            ${opt} \
-            --backend ${backend} \
-            --snapshots ${expdir}/results/snapshot.ep.* \
-            --out ${expdir}/results/${recog_model} \
-            --num ${n_average}
-
+	if [ ! -f ${expdir}/results/${recog_model} ]; then
+            average_checkpoints.py \
+		${opt} \
+		--backend ${backend} \
+		--snapshots ${expdir}/results/snapshot.ep.* \
+		--out ${expdir}/results/${recog_model} \
+		--num ${n_average}
+	fi
         # Average LM models
         if [ ${lm_n_average} -eq 0 ]; then
             lang_model=rnnlm.model.best
@@ -273,37 +270,31 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         fi
     fi
 
-    pids=() # initialize pids
+
     for rtask in ${recog_set}; do
-    (
+	
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})_${lmtag}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
         # split data
-        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+        splitjson.py --parts ${dnj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
 
         #### use CPU for decoding
         ngpu=0
 
         # set batchsize 0 to disable batch decoding
-        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-            asr_recog.py \
-            --config ${decode_config} \
-            --ngpu ${ngpu} \
-            --backend ${backend} \
-            --batchsize 0 \
-            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
-            --result-label ${expdir}/${decode_dir}/data.JOB.json \
-            --model ${expdir}/results/${recog_model}  \
-            --rnnlm ${lmexpdir}/${lang_model} \
-            --api v2
+        ${decode_cmd} JOB=1:${dnj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+		      asr_recog.py \
+		      --config ${decode_config} \
+		      --ngpu ${ngpu} \
+		      --backend ${backend} \
+		      --batchsize 1 \
+		      --recog-json ${feat_recog_dir}/split${dnj}utt/data_${bpemode}${nbpe}.JOB.json \
+		      --result-label ${expdir}/${decode_dir}/data.JOB.json \
+		      --model ${expdir}/results/${recog_model}  \
+		      --rnnlm ${lmexpdir}/${lang_model} \
+		      --api v2
 
         score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}
-
-    ) &
-    pids+=($!) # store background pids
     done
-    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
-    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
-    echo "Finished"
 fi

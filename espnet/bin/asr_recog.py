@@ -106,6 +106,14 @@ def get_parser():
     parser.add_argument(
         "--num-encs", default=1, type=int, help="Number of encoders in the model."
     )
+    # language_embedding related
+    parser.add_argument(
+        "--use-lang-tag",
+        default=False,
+        action="store_true",
+        help="The flag to use language tags as input.",
+    )
+
     # search related
     parser.add_argument("--nbest", type=int, default=1, help="Output N-best hypotheses")
     parser.add_argument("--beam-size", type=int, default=1, help="Beam size")
@@ -221,6 +229,14 @@ def get_parser():
         default=0.999,
         help="Threshold probability for CTC output",
     )
+
+    parser.add_argument(
+        "--dump_semisup_targets",
+        default=False,
+        type=strtobool,
+        help="Dump semisupervised targets during recognition",
+    )
+
 
     return parser
 

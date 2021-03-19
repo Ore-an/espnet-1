@@ -257,11 +257,12 @@ class CustomConverter(object):
 
     """
 
-    def __init__(self, subsampling_factor=1, dtype=torch.float32):
+    def __init__(self, subsampling_factor=1, dtype=torch.float32, use_lang_tag=False):
         """Construct a CustomConverter object."""
         self.subsampling_factor = subsampling_factor
         self.ignore_id = -1
         self.dtype = dtype
+        self.use_lang_tag = use_lang_tag
 
     def __call__(self, batch, device=torch.device("cpu")):
         """Transform a batch and send it to a device.
@@ -279,6 +280,15 @@ class CustomConverter(object):
         xs = batch[0][0]
         ys = batch[0][1]  # two outputs
         aux_ys = batch[0][2]
+        if self.use_lang_tag:
+            lang_tags = batch[0][3]
+            lang_tags = [torch.from_numpy(np.expand_dims(l, 0)).long() for l in lang_tags]
+            lang_tags = torch.cat(lang_tags).to(device)
+            # n_batch = len(lang_tags)
+            # lang_tens = lang_tags[0].new(n_batch, 1).fill(self.ignore_id)
+            # for i in range(n_batch):
+            #     lang_tens[i, 0] = lang_tags[i]
+            # lang_tags = lang_tens.to(device)
 
         # perform subsampling
         if self.subsampling_factor > 1:
@@ -315,7 +325,10 @@ class CustomConverter(object):
             [torch.from_numpy(y).long() for y in aux_ys], self.ignore_id
         ).to(device)
 
-        return xs_pad, ilens, ys_pad, aux_ys_pad
+        if self.use_lang_tag:
+            return xs_pad, ilens, ys_pad, aux_ys_pad, lang_tags
+        else:
+            return xs_pad, ilens, ys_pad, aux_ys_pad
 
 
 class CustomConverterMulEnc(object):
@@ -556,7 +569,7 @@ def train(args):
     # Setup a converter
     if args.num_encs == 1:
         converter = CustomConverter(
-            subsampling_factor=model.subsample[0], dtype=dtype)
+            subsampling_factor=model.subsample[0], dtype=dtype, use_lang_tag=args.use_lang_tag)
     else:
         converter = CustomConverterMulEnc(
             [i[0] for i in model.subsample_list], dtype=dtype
@@ -607,12 +620,14 @@ def train(args):
         load_output=True,
         preprocess_conf=args.preprocess_conf,
         preprocess_args={"train": True},  # Switch the mode of preprocessing
+        use_lang_tag=args.use_lang_tag,
     )
     load_cv = LoadInputsAndTargets(
         mode="asr",
         load_output=True,
         preprocess_conf=args.preprocess_conf,
         preprocess_args={"train": False},  # Switch the mode of preprocessing
+        use_lang_tag=args.use_lang_tag,
     )
     # hack to make batchsize argument as 1
     # actual bathsize is included in a list
@@ -994,6 +1009,7 @@ def recog(args):
         if args.preprocess_conf is None
         else args.preprocess_conf,
         preprocess_args={"train": False},
+        use_lang_tag=args.use_lang_tag,
     )
 
     if args.batchsize == 0:
@@ -1002,6 +1018,7 @@ def recog(args):
                 logging.info("(%d/%d) decoding " + name, idx, len(js.keys()))
                 batch = [(name, js[name])]
                 feat = load_inputs_and_targets(batch)
+                lang_tags = feat[0][-1]
                 feat = (
                     feat[0][0]
                     if args.num_encs == 1
@@ -1055,11 +1072,11 @@ def recog(args):
                                 nbest_hyps[n]["score"] += hyps[n]["score"]
                 elif hasattr(model, "decoder_mode") and model.decoder_mode == "maskctc":
                     nbest_hyps = model.recognize_maskctc(
-                        feat, args, train_args.char_list
+                        feat, args, train_args.char_list, lang_tags
                     )
                 else:
                     nbest_hyps = model.recognize(
-                        feat, args, train_args.char_list, rnnlm
+                        feat, args, train_args.char_list, rnnlm, lang_tags
                     )
                 new_js[name] = add_results_to_json(
                     js[name], nbest_hyps, train_args.char_list
@@ -1177,6 +1194,7 @@ def enhance(args):
         load_output=False,
         sort_in_input_length=False,
         preprocess_conf=None,  # Apply pre_process in outer func
+        use_lang_tag=args.use_lang_tag,
     )
     if args.batchsize == 0:
         args.batchsize = 1
@@ -1405,6 +1423,7 @@ def ctc_align(args):
         if args.preprocess_conf is None
         else args.preprocess_conf,
         preprocess_args={"train": False},
+        use_lang_tag=args.use_lang_tag,
     )
 
     if args.ngpu > 1:

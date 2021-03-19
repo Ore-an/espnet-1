@@ -362,6 +362,13 @@ def get_parser(parser=None, required=True):
         default=False,
         help="The flag to switch to use noise injection to gradients during training",
     )
+    # language_embedding related
+    parser.add_argument(
+        "--use-lang-tag",
+        default=False,
+        action="store_true",
+        help="The flag to use language tags as input.",
+    )
     # asr_mix related
     parser.add_argument(
         "--num-spkrs",

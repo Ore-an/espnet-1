@@ -21,7 +21,8 @@ def main():
                         help="input files to filter/encode")
     parser.add_argument("--outputs", nargs="+", default=['-'],
                         help="path to save encoded outputs")
-    parser.add_argument("--output_format", choices=["piece", "id"], default="piece")
+    parser.add_argument("--output_format",
+                        choices=["piece", "id"], default="piece")
     parser.add_argument("--min-len", type=int, metavar="N",
                         help="filter sentence pairs with fewer than N tokens")
     parser.add_argument("--max-len", type=int, metavar="N",

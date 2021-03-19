@@ -95,7 +95,8 @@ class DecoderLayer(nn.Module):
             )
             x = residual + self.concat_linear1(tgt_concat)
         else:
-            x = residual + self.dropout(self.self_attn(tgt_q, tgt, tgt, tgt_q_mask))
+            x = residual + \
+                self.dropout(self.self_attn(tgt_q, tgt, tgt, tgt_q_mask))
         if not self.normalize_before:
             x = self.norm1(x)
 
@@ -108,7 +109,8 @@ class DecoderLayer(nn.Module):
             )
             x = residual + self.concat_linear2(x_concat)
         else:
-            x = residual + self.dropout(self.src_attn(x, memory, memory, memory_mask))
+            x = residual + \
+                self.dropout(self.src_attn(x, memory, memory, memory_mask))
         if not self.normalize_before:
             x = self.norm2(x)
 

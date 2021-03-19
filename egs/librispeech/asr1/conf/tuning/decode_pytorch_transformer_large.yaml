@@ -1,4 +1,4 @@
-batchsize: 0
+batchsize: 1
 beam-size: 60
 ctc-weight: 0.4
 lm-weight: 0.6

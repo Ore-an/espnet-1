@@ -45,6 +45,7 @@ class LoadInputsAndTargets(object):
         load_output=True,
         sort_in_input_length=True,
         use_speaker_embedding=False,
+        use_lang_tag=False,
         use_second_target=False,
         preprocess_args=None,
         keep_all_data_on_mem=False,
@@ -75,6 +76,10 @@ class LoadInputsAndTargets(object):
                 '"use_second_target" and "use_speaker_embedding" is '
                 "used only for tts or vc mode"
             )
+        if use_lang_tag and mode != "asr":
+            logging.warning(
+                '"use_lang_tag" is used only for asr mode'
+            )
 
         self.mode = mode
         self.load_output = load_output
@@ -82,6 +87,7 @@ class LoadInputsAndTargets(object):
         self.sort_in_input_length = sort_in_input_length
         self.use_speaker_embedding = use_speaker_embedding
         self.use_second_target = use_second_target
+        self.use_lang_tag = use_lang_tag
         if preprocess_args is None:
             self.preprocess_args = {}
         else:
@@ -107,6 +113,9 @@ class LoadInputsAndTargets(object):
         y_feats_dict = OrderedDict()  # OrderedDict[str, List[np.ndarray]]
         uttid_list = []  # List[str]
 
+        if self.use_lang_tag:
+            lang_feats_dict = OrderedDict()
+
         for uttid, info in batch:
             uttid_list.append(uttid)
 
@@ -131,7 +140,9 @@ class LoadInputsAndTargets(object):
                             filepath=inp["feat"], filetype=inp.get("filetype", "mat")
                         )
                     x_feats_dict.setdefault(inp["name"], []).append(x)
-
+            if self.use_lang_tag:
+                lang_tag = np.array(int(info["lang"]), dtype=np.int32)
+                lang_feats_dict.setdefault('lang', []).append(lang_tag)
             if self.load_output:
                 if self.mode == "mt":
                     x = np.fromiter(
@@ -159,9 +170,14 @@ class LoadInputsAndTargets(object):
                     y_feats_dict.setdefault(inp["name"], []).append(x)
 
         if self.mode == "asr":
-            return_batch, uttid_list = self._create_batch_asr(
-                x_feats_dict, y_feats_dict, uttid_list
-            )
+            if self.use_lang_tag:
+                return_batch, uttid_list = self._create_batch_asr(
+                    x_feats_dict, y_feats_dict, uttid_list, lang_feats_dict
+                )
+            else:
+                return_batch, uttid_list = self._create_batch_asr(
+                    x_feats_dict, y_feats_dict, uttid_list
+                )
         elif self.mode == "tts":
             _, info = batch[0]
             eos = int(info["output"][0]["shape"][1]) - 1
@@ -190,7 +206,7 @@ class LoadInputsAndTargets(object):
         # Doesn't return the names now.
         return tuple(return_batch.values())
 
-    def _create_batch_asr(self, x_feats_dict, y_feats_dict, uttid_list):
+    def _create_batch_asr(self, x_feats_dict, y_feats_dict, uttid_list, lang_feats_dict=None):
         """Create a OrderedDict for the mini-batch
 
         :param OrderedDict x_feats_dict:
@@ -206,7 +222,9 @@ class LoadInputsAndTargets(object):
         """
         # handle single-input and multi-input (paralell) asr mode
         xs = list(x_feats_dict.values())
-
+        if lang_feats_dict:
+            langs = list(lang_feats_dict.values())
+            assert len(xs[0]) == len(langs[0]), (len(xs[0]), len(langs[0]))
         if self.load_output:
             ys = list(y_feats_dict.values())
             assert len(xs[0]) == len(ys[0]), (len(xs[0]), len(ys[0]))
@@ -237,17 +255,28 @@ class LoadInputsAndTargets(object):
         uttid_list = [uttid_list[i] for i in nonzero_sorted_idx]
 
         x_names = list(x_feats_dict.keys())
+        if lang_feats_dict:
+            langs = [[lang[i] for i in nonzero_sorted_idx] for lang in langs]
+            lang_names = list(lang_feats_dict.keys())  # this is only in the case we will want multiple lang tags at a point, it's hardcoded to be 'lang' ATM
         if self.load_output:
             ys = [[y[i] for i in nonzero_sorted_idx] for y in ys]
             y_names = list(y_feats_dict.keys())
-
-            # Keeping x_name and y_name, e.g. input1, for future extension
-            return_batch = OrderedDict(
-                [
-                    *[(x_name, x) for x_name, x in zip(x_names, xs)],
-                    *[(y_name, y) for y_name, y in zip(y_names, ys)],
-                ]
-            )
+            if lang_feats_dict:
+                return_batch = OrderedDict(
+                    [
+                        *[(x_name, x) for x_name, x in zip(x_names, xs)],
+                        *[(y_name, y) for y_name, y in zip(y_names, ys)],
+                        *[(lang_name, lang) for lang_name, lang in zip(lang_names, langs)],
+                    ]
+                )
+            else:
+                # Keeping x_name and y_name, e.g. input1, for future extension
+                return_batch = OrderedDict(
+                    [
+                        *[(x_name, x) for x_name, x in zip(x_names, xs)],
+                        *[(y_name, y) for y_name, y in zip(y_names, ys)],
+                    ]
+                )
         else:
             return_batch = OrderedDict([(x_name, x) for x_name, x in zip(x_names, xs)])
         return return_batch, uttid_list

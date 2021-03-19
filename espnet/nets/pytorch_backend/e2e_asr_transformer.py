@@ -249,6 +249,7 @@ class E2E(ASRInterface, torch.nn.Module):
             dropout_rate=args.dropout_rate,
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate,
+            use_lang_tag=args.use_lang_tag,
         )
         if args.mtlalpha < 1:
             self.decoder = Decoder(
@@ -316,7 +317,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # initialize parameters
         initialize(self, args.transformer_init)
 
-    def forward(self, xs_pad, ilens, ys_pad):
+    def forward(self, xs_pad, ilens, ys_pad, *langs):
         """E2E forward.
 
         :param torch.Tensor xs_pad: batch of padded source sequences (B, Tmax, idim)
@@ -332,7 +333,12 @@ class E2E(ASRInterface, torch.nn.Module):
         # 1. forward encoder
         xs_pad = xs_pad[:, : max(ilens)]  # for data parallel
         src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
+        if langs:
+            langs = langs[0]  # passing as *args gives tuple
+            hs_pad, hs_mask = self.encoder(xs_pad, src_mask, langs)
+        else:
+            hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
+        
         self.hs_pad = hs_pad
 
         # 2. forward decoder
@@ -410,7 +416,7 @@ class E2E(ASRInterface, torch.nn.Module):
         """Scorers."""
         return dict(decoder=self.decoder, ctc=CTCPrefixScorer(self.ctc, self.eos))
 
-    def encode(self, x):
+    def encode(self, x, *langs):
         """Encode acoustic features.
 
         :param ndarray x: source acoustic feature (T, D)
@@ -419,10 +425,14 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
-        enc_output, _ = self.encoder(x, None)
+        langs = torch.as_tensor(langs[0]).unsqueeze(0)
+        if langs:
+            enc_output, _ = self.encoder(x, langs)
+        else:
+            enc_output, _ = self.encoder(x, None)
         return enc_output.squeeze(0)
 
-    def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
+    def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False, *langs):
         """Recognize input speech.
 
         :param ndnarray x: input acoustic feature (B, T, D) or (T, D)
@@ -432,7 +442,11 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results
         :rtype: list
         """
-        enc_output = self.encode(x).unsqueeze(0)
+        if langs:
+            enc_output = self.encode(x, langs[0]).unsqueeze(0)
+        else:
+            enc_output = self.encode(x).unsqueeze(0)
+
         if self.mtlalpha == 1.0:
             recog_args.ctc_weight = 1.0
             logging.info("Set to pure CTC decoding mode.")
@@ -642,7 +656,7 @@ class E2E(ASRInterface, torch.nn.Module):
         )
         return nbest_hyps
 
-    def recognize_maskctc(self, x, recog_args, char_list=None):
+    def recognize_maskctc(self, x, recog_args, char_list=None, *langs):
         """Non-autoregressive decoding using Mask CTC.
 
         :param ndnarray x: input acoustic feature (B, T, D) or (T, D)
@@ -652,7 +666,10 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: list
         """
         self.eval()
-        h = self.encode(x).unsqueeze(0)
+        if langs:
+            h = self.encode(x, langs[0]).unsqueeze(0)
+        else:
+            h = self.encode(x).unsqueeze(0)
 
         ctc_probs, ctc_ids = torch.exp(self.ctc.log_softmax(h)).max(dim=-1)
         y_hat = torch.stack([x[0] for x in groupby(ctc_ids[0])])
@@ -733,7 +750,7 @@ class E2E(ASRInterface, torch.nn.Module):
 
         return [hyp]
 
-    def calculate_all_attentions(self, xs_pad, ilens, ys_pad):
+    def calculate_all_attentions(self, xs_pad, ilens, ys_pad, *langs):
         """E2E attention calculation.
 
         :param torch.Tensor xs_pad: batch of padded input sequences (B, Tmax, idim)
@@ -744,7 +761,11 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         self.eval()
         with torch.no_grad():
-            self.forward(xs_pad, ilens, ys_pad)
+            if langs:
+                self.forward(xs_pad, ilens, ys_pad, langs[0])
+            else:
+                self.forward(xs_pad, ilens, ys_pad)
+
         ret = dict()
         for name, m in self.named_modules():
             if (
@@ -759,7 +780,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.train()
         return ret
 
-    def calculate_all_ctc_probs(self, xs_pad, ilens, ys_pad):
+    def calculate_all_ctc_probs(self, xs_pad, ilens, ys_pad, *langs):
         """E2E CTC probability calculation.
 
         :param torch.Tensor xs_pad: batch of padded input sequences (B, Tmax)
@@ -774,7 +795,10 @@ class E2E(ASRInterface, torch.nn.Module):
 
         self.eval()
         with torch.no_grad():
-            self.forward(xs_pad, ilens, ys_pad)
+            if langs:
+                self.forward(xs_pad, ilens, ys_pad, aux_ys_pad, langs[0])
+            else:
+                self.forward(xs_pad, ilens, ys_pad, aux_ys_pad)
         for name, m in self.named_modules():
             if isinstance(m, CTC) and m.probs is not None:
                 ret = m.probs.cpu().numpy()
