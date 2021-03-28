@@ -10,6 +10,7 @@ nj=1
 cmd=run.pl
 nlsyms=""
 lang=""
+langfile=""
 feat="" # feat.scp
 oov="<unk>"
 bpecode=""
@@ -33,6 +34,7 @@ Options:
   --feat <feat-scp>                                # feat.scp or feat1.scp,feat2.scp,...
   --oov <oov-word>                                 # Default: <unk>
   --out <outputfile>                               # If omitted, write in stdout
+  --langfile                                       # File with language information for each utterance
   --filetype <mat|hdf5|sound.hdf5>                 # Specify the format of feats file
   --preprocess-conf <json>                         # Apply preprocess to feats when creating shape.scp
   --verbose <num>                                  # Default: 0
@@ -120,6 +122,10 @@ if [ ${multilingual} == true ]; then
     }' ${text} > ${tmpdir}/other/lang.scp
 elif [ -n "${lang}" ]; then
     awk -v lang=${lang} '{print $1 " " lang}' ${text} > ${tmpdir}/other/lang.scp
+fi
+
+if [ -n "${langfile}" ]; then
+    cat ${langfile} > ${tmpdir}/other/lang.scp
 fi
 
 if [ -n "${category}" ]; then

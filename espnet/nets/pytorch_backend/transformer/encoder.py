@@ -100,14 +100,19 @@ class Encoder(torch.nn.Module):
             lang_emb_dim = 5  # free dimension
             self.lang_embedding = torch.nn.Embedding(13, lang_emb_dim, padding_idx=-1, max_norm=3)  # TODO: hardcoded is not right, fix
             self.lang_ffrelu = torch.nn.Sequential(
-                torch.nn.Linear(lang_emb_dim, attention_dim),
-                torch.nn.LayerNorm(attention_dim),
+                torch.nn.Linear(lang_emb_dim, lang_emb_dim),
+                torch.nn.LayerNorm(lang_emb_dim),
                 torch.nn.Dropout(dropout_rate),
                 torch.nn.ReLU(),
-                torch.nn.Linear(attention_dim, lang_emb_dim),
-                torch.nn.LayerNorm(attention_dim),
+                torch.nn.Linear(lang_emb_dim, lang_emb_dim),
+                torch.nn.LayerNorm(lang_emb_dim),
                 torch.nn.Dropout(dropout_rate),
                 torch.nn.ReLU(),)
+            self.combine_lang_xs = torch.nn.Sequential(
+                torch.nn.Linear(attention_dim+lang_emb_dim, attention_dim),
+                torch.nn.LayerNorm(attention_dim),
+                torch.nn.Dropout(dropout_rate),
+                torch.nn.ReLU())
             # idim += lang_emb_dim
             # adim += lang_emb_dim
 
@@ -301,13 +306,6 @@ class Encoder(torch.nn.Module):
         :return: position embedded tensor and mask
         :rtype Tuple[torch.Tensor, torch.Tensor]:
         """
-        if langs:
-            langs = langs[0]   # passing as *args gives tuple
-            Tmax = xs.size(1)
-            langs = langs.unsqueeze(1).expand(-1, Tmax)
-            langs_emb = self.lang_embedding(langs)
-            langs = self.lang_ffrelu(langs_emb)
-
         if isinstance(
             self.embed,
             (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
@@ -318,7 +316,15 @@ class Encoder(torch.nn.Module):
         xs, masks = self.encoders(xs, masks)
         if self.normalize_before:
             xs = self.after_norm(xs)
-        xs = torch.cat((xs, langs), 2)
+        if langs:
+            langs = langs[0]   # passing as *args gives tuple
+            Tmax = xs.size(1)
+            langs = langs.unsqueeze(1)
+            langs_emb = self.lang_embedding(langs)
+            langs = self.lang_ffrelu(langs_emb)
+            xs = torch.cat((xs, langs.expand(-1, Tmax, -1)), 2)
+            xs = self.combine_lang_xs(xs)
+
         return xs, masks
 
     def forward_one_step(self, xs, masks, *langs, **kwargs):
@@ -331,12 +337,6 @@ class Encoder(torch.nn.Module):
         :rtype Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
         """
         cache = kwargs.get('cache')
-        if langs:
-            langs = langs[0]   # passing as *args gives tuple
-            Tmax = xs.size(1)
-            langs = langs.unsqueeze(1).expand(-1, Tmax)
-            langs_emb = self.lang_embedding(langs)
-            xs = torch.cat((xs, langs_emb), 2)
 
         if isinstance(self.embed, Conv2dSubsampling):
             xs, masks = self.embed(xs, masks)
@@ -350,4 +350,12 @@ class Encoder(torch.nn.Module):
             new_cache.append(xs)
         if self.normalize_before:
             xs = self.after_norm(xs)
+        if langs:
+            langs = langs[0]   # passing as *args gives tuple
+            Tmax = xs.size(1)
+            langs = langs.unsqueeze(1).expand(-1, Tmax)
+            langs_emb = self.lang_embedding(langs)
+            langs = self.lang_ffrelu(langs_emb)
+            xs = torch.cat((xs, langs.expand(-1, Tmax, -1)), 2)
+            xs = self.combine_lang_xs(xs)
         return xs, masks, new_cache

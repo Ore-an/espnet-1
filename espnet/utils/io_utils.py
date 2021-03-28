@@ -277,6 +277,13 @@ class LoadInputsAndTargets(object):
                         *[(y_name, y) for y_name, y in zip(y_names, ys)],
                     ]
                 )
+        elif lang_feats_dict:
+            return_batch = OrderedDict(
+                [
+                    *[(x_name, x) for x_name, x in zip(x_names, xs)],
+                    *[(lang_name, lang) for lang_name, lang in zip(lang_names, langs)],
+                ]
+            )
         else:
             return_batch = OrderedDict([(x_name, x) for x_name, x in zip(x_names, xs)])
         return return_batch, uttid_list

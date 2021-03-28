@@ -43,7 +43,7 @@ def recog_v2(args):
     model, train_args = load_trained_model(args.model)
     assert isinstance(model, ASRInterface)
     model.eval()
-
+    logging.info('Recog - Use language tags: {}'.format(train_args.use_lang_tag))
     load_inputs_and_targets = LoadInputsAndTargets(
         mode="asr",
         load_output=False,
@@ -52,6 +52,7 @@ def recog_v2(args):
         if args.preprocess_conf is None
         else args.preprocess_conf,
         preprocess_args={"train": False},
+        use_lang_tag=train_args.use_lang_tag
     )
 
     if args.rnnlm:
@@ -133,7 +134,12 @@ def recog_v2(args):
             logging.info("(%d/%d) decoding " + name, idx, len(js.keys()))
             batch = [(name, js[name])]
             feat = load_inputs_and_targets(batch)[0][0]
-            enc = model.encode(torch.as_tensor(feat).to(device=device, dtype=dtype))
+            if train_args.use_lang_tag:
+                lang_tags = load_inputs_and_targets(batch)[-1][0]
+                enc = model.encode(torch.as_tensor(feat).to(device=device, dtype=dtype),
+                                   torch.as_tensor(lang_tags).to(device=device, dtype=torch.long))
+            else:
+                enc = model.encode(torch.as_tensor(feat).to(device=device, dtype=dtype))
             nbest_hyps = beam_search(
                 x=enc, maxlenratio=args.maxlenratio, minlenratio=args.minlenratio
             )

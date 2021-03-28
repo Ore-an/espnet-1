@@ -255,11 +255,12 @@ class CustomConverter(object):
 
     """
 
-    def __init__(self, subsampling_factor=1, dtype=torch.float32):
+    def __init__(self, subsampling_factor=1, dtype=torch.float32, use_lang_tag=False):
         """Construct a CustomConverter object."""
         self.subsampling_factor = subsampling_factor
         self.ignore_id = -1
         self.dtype = dtype
+        self.use_lang_tag = use_lang_tag
 
     def __call__(self, batch, device=torch.device("cpu")):
         """Transform a batch and send it to a device.
@@ -274,8 +275,13 @@ class CustomConverter(object):
         """
         # batch should be located in list
         assert len(batch) == 1
-        xs, ys = batch[0]
 
+        if self.use_lang_tag:
+            xs, ys, lang_tags = batch[0]
+            lang_tags = [torch.from_numpy(np.expand_dims(l, 0)).long() for l in lang_tags]
+            lang_tags = torch.cat(lang_tags).to(device)
+        else:
+            xs, ys = batch[0]
         # perform subsampling
         if self.subsampling_factor > 1:
             xs = [x[:: self.subsampling_factor, :] for x in xs]
@@ -314,7 +320,10 @@ class CustomConverter(object):
             self.ignore_id,
         ).to(device)
 
-        return xs_pad, ilens, ys_pad
+        if self.use_lang_tag:
+            return xs_pad, ilens, ys_pad, lang_tags
+        else:
+            return xs_pad, ilens, ys_pad
 
 
 class CustomConverterMulEnc(object):

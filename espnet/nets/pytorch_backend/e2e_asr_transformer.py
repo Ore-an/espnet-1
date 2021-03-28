@@ -425,10 +425,11 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
-        langs = torch.as_tensor(langs[0]).unsqueeze(0)
         if langs:
-            enc_output, _ = self.encoder(x, langs)
+            langs = torch.as_tensor(langs[0]).unsqueeze(0)
+            enc_output, _ = self.encoder(x, None, langs)
         else:
+            logging.warning('No language tags passed to encoder')
             enc_output, _ = self.encoder(x, None)
         return enc_output.squeeze(0)
 
@@ -796,9 +797,9 @@ class E2E(ASRInterface, torch.nn.Module):
         self.eval()
         with torch.no_grad():
             if langs:
-                self.forward(xs_pad, ilens, ys_pad, aux_ys_pad, langs[0])
+                self.forward(xs_pad, ilens, ys_pad, langs[0])
             else:
-                self.forward(xs_pad, ilens, ys_pad, aux_ys_pad)
+                self.forward(xs_pad, ilens, ys_pad)
         for name, m in self.named_modules():
             if isinstance(m, CTC) and m.probs is not None:
                 ret = m.probs.cpu().numpy()

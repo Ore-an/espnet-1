@@ -484,10 +484,11 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
-        langs = torch.as_tensor(langs[0]).unsqueeze(0)
         if langs:
-            enc_output, _ = self.encoder(x, langs)
+            langs = torch.as_tensor(langs[0]).unsqueeze(0)
+            enc_output, _ = self.encoder(x, None, langs)
         else:
+            logging.warning('No language tags passed to encoder')
             enc_output, _ = self.encoder(x, None)
         return enc_output.squeeze(0)
 
@@ -716,7 +717,10 @@ class E2E(ASRInterface, torch.nn.Module):
             # should copy becasuse Namespace will be overwritten globally
             recog_args = Namespace(**vars(recog_args))
             recog_args.minlenratio = max(0.0, recog_args.minlenratio - 0.1)
-            return self.recognize(x, recog_args, char_list, rnnlm)
+            if langs:
+                return self.recognize(x, recog_args, char_list, rnnlm, langs[0])
+            else:
+                return self.recognize(x, recog_args, char_list, rnnlm)
 
         logging.info("total log probability: " + str(nbest_hyps[0]["score"]))
         logging.info(

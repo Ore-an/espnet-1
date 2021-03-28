@@ -281,7 +281,7 @@ class CustomConverter(object):
         ys = batch[0][1]  # two outputs
         aux_ys = batch[0][2]
         if self.use_lang_tag:
-            lang_tags = batch[0][3]
+            lang_tags = batch[0][-1]
             lang_tags = [torch.from_numpy(np.expand_dims(l, 0)).long() for l in lang_tags]
             lang_tags = torch.cat(lang_tags).to(device)
             # n_batch = len(lang_tags)
